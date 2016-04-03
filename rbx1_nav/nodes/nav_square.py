@@ -37,7 +37,7 @@ class NavSquare():
         rospy.on_shutdown(self.shutdown)
 
         # How fast will we check the odometry values?
-        rate = 20
+        rate = 50  # raised from 20 to check if accuracy improves
         
         # Set the equivalent ROS rate variable
         r = rospy.Rate(rate)
@@ -47,7 +47,7 @@ class NavSquare():
         goal_angle = rospy.get_param("~goal_angle", radians(90))    # degrees converted to radians
         linear_speed = rospy.get_param("~linear_speed", 0.2)        # meters per second
         angular_speed = rospy.get_param("~angular_speed", 0.7)      # radians per second
-        angular_tolerance = rospy.get_param("~angular_tolerance", radians(2)) # degrees to radians
+        angular_tolerance = rospy.get_param("~angular_tolerance", radians(0)) # degrees to radians
         
         # Publisher to control the robot's speed
         self.cmd_vel = rospy.Publisher('/cmd_vel', Twist, queue_size=5)
@@ -100,6 +100,8 @@ class NavSquare():
             distance = 0
             
             # Enter the loop to move along a side
+            (position2, rotation2) = self.get_odom()
+            rospy.loginfo("Before straight: %s" % (rotation2 * 180 / 3.14159))
             while distance < goal_distance and not rospy.is_shutdown():
                 # Publish the Twist message and sleep 1 cycle         
                 self.cmd_vel.publish(move_cmd)
@@ -116,10 +118,16 @@ class NavSquare():
             # Stop the robot before rotating
             move_cmd = Twist()
             self.cmd_vel.publish(move_cmd)
+            (position3, rotation3) = self.get_odom()
+            rospy.loginfo("After straight: %s" % (rotation3 * 180 / 3.14159))
             rospy.sleep(1.0)
             
             # Set the movement command to a rotation
             move_cmd.angular.z = angular_speed
+            # Movement command for slow rotation near end of turn
+            move_cmd_slow = Twist()
+            move_cmd_slow.angular.z = copysign(0.2, angular_speed)
+            slow_angle = radians(10)  # how far before goal_angle to slow down
             
             # Track the last angle measured
             last_angle = rotation
@@ -128,9 +136,13 @@ class NavSquare():
             turn_angle = 0
             
             # Begin the rotation
-            while abs(turn_angle + angular_tolerance) < abs(goal_angle) and not rospy.is_shutdown():
+            rospy.loginfo("Before turn: %s" % (rotation * 180/3.14159))
+            while abs(turn_angle + angular_tolerance) < abs(goal_angle - radians(0.8)) and not rospy.is_shutdown():
                 # Publish the Twist message and sleep 1 cycle         
-                self.cmd_vel.publish(move_cmd)
+                if abs(turn_angle + angular_tolerance) <= (abs(goal_angle) - slow_angle):
+                    self.cmd_vel.publish(move_cmd)
+                else:
+                    self.cmd_vel.publish(move_cmd_slow)
                 
                 r.sleep()
                 
@@ -143,8 +155,11 @@ class NavSquare():
                 turn_angle += delta_angle
                 last_angle = rotation
 
+            rospy.loginfo("After turn: %s" % (rotation * 180/3.14159))
             move_cmd = Twist()
             self.cmd_vel.publish(move_cmd)
+            (position1, rotation1) = self.get_odom()
+            rospy.loginfo("After turn stop: %s" % (rotation1 * 180/3.14159))
             rospy.sleep(1.0)
             
         # Stop the robot when we are done
